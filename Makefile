@@ -3,11 +3,12 @@
 APP_NAME=flickr
 VERSION=$(shell cat VERSION 2>/dev/null || echo "0.1.0")
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-VERSION_PKG=github.com/yourorg/flickr/internal/version
+VERSION_PKG=main
 LD_FLAGS=-X '$(VERSION_PKG).Version=$(VERSION)' \
          -X '$(VERSION_PKG).Commit=$(COMMIT)' \
-         -X '$(VERSION_PKG).BuildTime=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")'
+         -X '$(VERSION_PKG).BuildTime=$(BUILD_TIME)'
 
 GO_FLAGS=-ldflags "$(LD_FLAGS)"
 GO=$(shell which go)

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/yourorg/flickr/internal/docker"
@@ -24,6 +25,7 @@ type RunConfig struct {
 	Name           string
 	Detached       bool
 	Env            map[string]string
+	Cmd            []string
 }
 
 func New(rm eth.ReleaseManagerClient, dockerRunner docker.Docker) *Controller {
@@ -44,11 +46,33 @@ func (c *Controller) Execute(ctx context.Context, cfg RunConfig) error {
 	if cfg.ReleaseID == nil {
 		rel, relID, err = c.RM.GetLatestRelease(ctx, cfg.AVS, cfg.OperatorSetID)
 		if err != nil {
+			// Provide better error message for common issues
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "arithmetic underflow") || strings.Contains(errMsg, "NoReleases") {
+				return fmt.Errorf(`no releases available for this operator set
+
+To push a release, run:
+  flickr push --image <your-image>
+
+Current configuration:
+  AVS: %s
+  Operator Set: %d`, cfg.AVS.Hex(), cfg.OperatorSetID)
+			}
+			if strings.Contains(errMsg, "array out-of-bounds") {
+				return fmt.Errorf(`no releases found (the operator set may not have any releases yet)
+
+To push a release, run:
+  flickr push --image <your-image>`)
+			}
 			return fmt.Errorf("failed to get latest release: %w", err)
 		}
 	} else {
 		rel, err = c.RM.GetRelease(ctx, cfg.AVS, cfg.OperatorSetID, *cfg.ReleaseID)
 		if err != nil {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "array out-of-bounds") {
+				return fmt.Errorf("release ID %d does not exist", *cfg.ReleaseID)
+			}
 			return fmt.Errorf("failed to get release %d: %w", *cfg.ReleaseID, err)
 		}
 		relID = *cfg.ReleaseID
@@ -93,7 +117,7 @@ func (c *Controller) Execute(ctx context.Context, cfg RunConfig) error {
 		Name:     cfg.Name,
 		Detached: cfg.Detached,
 		Env:      env,
-		Cmd:      nil, // MVP doesn't specify commands
+		Cmd:      cfg.Cmd,
 	}
 	
 	if err := c.Docker.Run(ctx, reference, runOpts); err != nil {

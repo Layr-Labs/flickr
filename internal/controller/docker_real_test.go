@@ -267,11 +267,12 @@ func TestRealDocker_CleanupMultiple(t *testing.T) {
 		exec.Command("docker", "stop", name).Run()
 	}
 	
-	// Verify all stopped
+	// Verify all containers are removed (--rm flag automatically removes them)
 	for _, name := range containerNames {
-		cmd := exec.Command("docker", "ps", "-a", "--filter", fmt.Sprintf("name=%s", name), "--format", "{{.Status}}")
+		cmd := exec.Command("docker", "ps", "-a", "--filter", fmt.Sprintf("name=%s", name), "--format", "{{.Names}}")
 		output, err := cmd.Output()
 		require.NoError(t, err)
-		assert.Contains(t, strings.ToLower(string(output)), "exited", "Container %s should be stopped", name)
+		// With --rm flag, containers should be removed after stopping
+		assert.Empty(t, strings.TrimSpace(string(output)), "Container %s should be removed", name)
 	}
 }

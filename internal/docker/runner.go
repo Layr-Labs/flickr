@@ -35,6 +35,10 @@ func (r *Runner) Pull(ctx context.Context, ref string) error {
 
 func (r *Runner) Run(ctx context.Context, ref string, opts RunOptions) error {
 	args := []string{"run"}
+	
+	// Add --rm flag to clean up after container exits
+	args = append(args, "--rm")
+	
 	if opts.Name != "" {
 		args = append(args, "--name", opts.Name)
 	}
