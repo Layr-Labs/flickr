@@ -1,0 +1,12 @@
+[files]
+extend-exclude = [
+    "go.sum",
+    "vendor/",
+    "*.lock",
+    "*.tar.gz",
+]
+
+[default.extend-words]
+# Add project-specific words that should not be considered typos
+flickr = "flickr"
+Flickr = "Flickr"

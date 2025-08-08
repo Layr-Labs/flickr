@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run tests
+        run: make test-fast
+
+  build-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: darwin
+            arch: amd64
+            suffix: darwin-amd64
+          - os: darwin
+            arch: arm64
+            suffix: darwin-arm64
+          - os: linux
+            arch: amd64
+            suffix: linux-amd64
+          - os: linux
+            arch: arm64
+            suffix: linux-arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version $VERSION"
+
+      - name: Build binary
+        run: |
+          make build-${{ matrix.os }}-${{ matrix.arch }}
+          cd release/${{ matrix.suffix }}
+          tar -czf ../flickr-${{ matrix.suffix }}-${{ steps.version.outputs.VERSION }}.tar.gz flickr
+          cd ../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: flickr-${{ matrix.suffix }}
+          path: release/flickr-${{ matrix.suffix }}-*.tar.gz
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "# Release ${{ steps.version.outputs.VERSION }}" > changelog.md
+          echo "" >> changelog.md
+          echo "## Downloads" >> changelog.md
+          echo "" >> changelog.md
+          echo "| Platform | Architecture | Download |" >> changelog.md
+          echo "|----------|--------------|----------|" >> changelog.md
+          echo "| macOS | Intel (amd64) | [flickr-darwin-amd64-${{ steps.version.outputs.VERSION }}.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/flickr-darwin-amd64-${{ steps.version.outputs.VERSION }}.tar.gz) |" >> changelog.md
+          echo "| macOS | Apple Silicon (arm64) | [flickr-darwin-arm64-${{ steps.version.outputs.VERSION }}.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/flickr-darwin-arm64-${{ steps.version.outputs.VERSION }}.tar.gz) |" >> changelog.md
+          echo "| Linux | x86_64 (amd64) | [flickr-linux-amd64-${{ steps.version.outputs.VERSION }}.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/flickr-linux-amd64-${{ steps.version.outputs.VERSION }}.tar.gz) |" >> changelog.md
+          echo "| Linux | ARM64 | [flickr-linux-arm64-${{ steps.version.outputs.VERSION }}.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/flickr-linux-arm64-${{ steps.version.outputs.VERSION }}.tar.gz) |" >> changelog.md
+          echo "" >> changelog.md
+          echo "## Installation" >> changelog.md
+          echo "" >> changelog.md
+          echo '```bash' >> changelog.md
+          echo '# macOS (Apple Silicon)' >> changelog.md
+          echo 'curl -L https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/flickr-darwin-arm64-${{ steps.version.outputs.VERSION }}.tar.gz | tar xz' >> changelog.md
+          echo 'sudo mv flickr /usr/local/bin/' >> changelog.md
+          echo '```' >> changelog.md
+          echo "" >> changelog.md
+          echo "## What's Changed" >> changelog.md
+          echo "" >> changelog.md
+          git log --pretty=format:"- %s (%h)" $(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")..HEAD >> changelog.md || echo "- Initial release" >> changelog.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.version.outputs.VERSION }}
+          body_path: changelog.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
+          files: |
+            artifacts/**/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker-release:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
